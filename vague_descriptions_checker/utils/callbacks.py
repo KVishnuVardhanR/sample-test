@@ -6,9 +6,10 @@ from google.adk.models import LlmResponse, LlmRequest
 import os
 import json
 from typing import Optional
-
-
 import redis
+from vague_descriptions_checker.utils.logging import get_logger
+
+logger = get_logger("callbacks")
 
 class CallbacksManager:
     def __init__(self):
@@ -79,7 +80,12 @@ class CallbacksManager:
             try:
                 cached_response = self.client.get(last_user_message)
                 if cached_response:
-                    print(f"⚡ [CACHE HIT] Found existing response for: '{last_user_message.strip()[:30]}...'")
+                    logger.info("Cache hit", extra={
+                        "json_fields": {
+                            "prompt": last_user_message.strip()[:50],
+                            "event": "CACHE_HIT"
+                        }
+                    })
                     return LlmResponse(
                         content=types.Content(
                             role="model",
@@ -87,11 +93,11 @@ class CallbacksManager:
                         )
                     )
             except Exception as e:
-                print(f"Error checking Redis cache: {e}")
+                logger.error("Error checking Redis cache", extra={"json_fields": {"error": str(e)}})
                 # Proceed to LLM call if Redis fails
                 
         except Exception as e:
-            print(f"Error in guardrail judge: {e}")
+            logger.error("Error in guardrail judge", extra={"json_fields": {"error": str(e)}})
             # In case of error, we proceed with the normal call as a fallback
             return None
         
@@ -111,7 +117,13 @@ class CallbacksManager:
             if agent_response:
                 # Cache the response with the user message as the key
                 self.client.set(prompt, agent_response)
+                logger.info("Storing response in cache", extra={
+                    "json_fields": {
+                        "prompt": prompt[:50],
+                        "event": "CACHE_STORE"
+                    }
+                })
         except Exception as e:
-            print(f"Error updating Redis cache: {e}")
+            logger.error("Error updating Redis cache", extra={"json_fields": {"error": str(e)}})
             
         return None

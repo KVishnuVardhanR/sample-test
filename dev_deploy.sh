@@ -35,15 +35,16 @@ gcloud builds submit --tag ${IMAGE_NAME}
 echo "📝 Preparing environment variables..."
 if [ -f .env ]; then
     # 1. Strip comments and empty lines
-    # 2. Convert 'KEY=VALUE' to 'KEY: "VALUE"' 
-    # 3. Handle cases where the value might already contain quotes
+    # 2. Convert 'KEY=VALUE' to 'KEY: "VALUE"'
     grep -v '^#' .env | grep -v '^[[:space:]]*$' | \
     sed 's/ *= */: /' | \
     sed 's/: \(.*\)/: "\1"/' | \
     sed 's/""/"/g' > env-vars.yaml
+    
+    # ADD THIS LINE: Inject the LOG_LEVEL into the YAML file
+    echo "LOG_LEVEL: \"DEBUG\"" >> env-vars.yaml
 else
-    echo "⚠️ .env not found, creating empty map."
-    echo "{}" > env-vars.yaml
+    echo "LOG_LEVEL: \"DEBUG\"" > env-vars.yaml
 fi
 
 # Deploy to Cloud Run
@@ -54,7 +55,8 @@ gcloud run deploy ${SERVICE_NAME} \
     --platform managed \
     --allow-unauthenticated \
     --env-vars-file env-vars.yaml \
-    --vpc-connector="vpc-conn"
+    --vpc-connector="vpc-conn" \
+    --vpc-egress="private-ranges-only"
 
 # Cleanup
 rm env-vars.yaml

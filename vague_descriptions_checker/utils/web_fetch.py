@@ -5,6 +5,9 @@ import requests
 import json
 import gcsfs
 from dotenv import load_dotenv
+from vague_descriptions_checker.utils.logging import get_logger
+
+logger = get_logger("web_fetch")
 
 # Load environment variables from .env file
 load_dotenv()
@@ -38,11 +41,11 @@ def fetch_cbp_content():
     gcs_url = os.getenv("CBP_GCS_URL")
     
     if not url:
-        print("Error: CBP_URL environment variable is not set.")
+        logger.error("CBP_URL environment variable is not set")
         return None
 
     try:
-        print(f"Fetching content from {url}...")
+        logger.info("Fetching content from CBP website", extra={"json_fields": {"url": url}})
         response = requests.get(url, timeout=10)
         response.raise_for_status()  # Check for HTTP errors
         content = clean_html(response.text)
@@ -53,18 +56,18 @@ def fetch_cbp_content():
                 fs = gcsfs.GCSFileSystem()
                 with fs.open(gcs_url, 'w') as f:
                     json.dump({"content": content}, f)
-                print(f"Successfully updated GCS at {gcs_url}")
+                logger.info("Successfully updated GCS cache", extra={"json_fields": {"gcs_url": gcs_url}})
             except Exception as e:
-                print(f"Warning: Failed to update GCS at {gcs_url}: {e}")
+                logger.warning("Failed to update GCS cache", extra={"json_fields": {"gcs_url": gcs_url, "error": str(e)}})
         
         return content
         
     except requests.exceptions.RequestException as e:
-        print(f"Error fetching content from {url}: {e}")
-        print("Website might be down. Attempting to fetch from GCS...")
+        logger.error("CBP website fetch failed", extra={"json_fields": {"url": url, "error": str(e)}})
+        logger.info("Attempting to fetch from GCS fallback")
         
         if not gcs_url:
-            print("Error: CBP_GCS_URL is not set, no fallback available.")
+            logger.error("CBP_GCS_URL is not set, no fallback available")
             return None
             
         try:
@@ -72,12 +75,11 @@ def fetch_cbp_content():
             if fs.exists(gcs_url):
                 with fs.open(gcs_url, 'r') as f:
                     data = json.load(f)
-                    print(f"Successfully loaded content from GCS: {gcs_url}")
+                    logger.info("Successfully loaded content from GCS fallback", extra={"json_fields": {"gcs_url": gcs_url}})
                     return data.get("content")
             else:
-                print(f"Error: GCS file {gcs_url} does not exist.")
-                print("Note: GCS fallback requires a successful website fetch at least once to populate the cache.")
+                logger.error("GCS fallback file does not exist", extra={"json_fields": {"gcs_url": gcs_url}})
                 return None
         except Exception as ge:
-            print(f"Error fetching from GCS fallback: {ge}")
+            logger.error("Error fetching from GCS fallback", extra={"json_fields": {"error": str(ge)}})
             return None

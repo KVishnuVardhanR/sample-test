@@ -2,3 +2,4 @@ google-cloud-aiplatform[adk,agent_engines]
 redis
 requests
 gcsfs
+google-cloud-logging
