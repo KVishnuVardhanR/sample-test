@@ -52,6 +52,9 @@ def create_vague_descriptions_checker_agent(name: str = "vague_descriptions_chec
         generate_content_config=types.GenerateContentConfig(
             seed=os.getenv("GOOGLE_GENAI_SEED", 123),
             temperature=os.getenv("GOOGLE_GENAI_TEMPERATURE", 0.01),
+            http_options=types.HttpOptions(
+            retry_options=types.HttpRetryOptions(initial_delay=1, attempts=2),
+            ),
         ),
         before_model_callback=callbacks_manager.guardrail_function,
         after_model_callback=callbacks_manager.handle_cache_miss,

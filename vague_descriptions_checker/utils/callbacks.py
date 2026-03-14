@@ -60,7 +60,10 @@ class CallbacksManager:
                 contents=judge_prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.0,
-                    max_output_tokens=3
+                    max_output_tokens=3,
+                    http_options=types.HttpOptions(
+                        retry_options=types.HttpRetryOptions(initial_delay=1, attempts=2),
+                    ),
                 )
             )
             
