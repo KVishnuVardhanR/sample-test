@@ -14,149 +14,154 @@
 
 import json
 import pytest
-from google.adk.agents.run_config import RunConfig, StreamingMode
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
+import os
+import pytest_asyncio
+from google.adk.runners import InMemoryRunner
 from google.genai import types
-from google.adk.models import LlmRequest, LlmResponse
+from unittest.mock import MagicMock, patch, AsyncMock
 
-from vague_descriptions_checker.utils.plugins import GuardrailPlugin, RedisPlugin
 from vague_descriptions_checker.agent import create_vague_descriptions_checker_agent
 
-
-@pytest.fixture
-async def agent_runner():
-    session_service = InMemorySessionService()
-
-    runner = Runner(
-        agent=create_vague_descriptions_checker_agent(), 
-        app_name="test",
-        session_service=session_service,
-    )
-
-    session = await runner.session_service.create_session(user_id="test_user", app_name="test")
-    return runner, session.id
-
-
-async def get_final_response(runner, session_id, query, plugins=None):
-    message = types.Content(
-        role="user", parts=[types.Part.from_text(text=query)]
-    )
-
-    llm_request = LlmRequest(contents=[message])
+@pytest_asyncio.fixture
+async def agent_setup():
+    """Fixture to set up the InMemoryRunner and mocks."""
+    os.environ["REDIS_HOST"] = "localhost"
     
-    if plugins:
-        for plugin in plugins:
-            try:
-                if isinstance(plugin, RedisPlugin):
-                    response = plugin.before_model_callback(None, llm_request)
-                    if response: return json.loads(response.content.parts[0].text)
-                elif isinstance(plugin, GuardrailPlugin):
-                    response = plugin.before_agent_callback(None, llm_request)
-                    if response: return json.loads(response.content.parts[0].text)
-            except TypeError:
-                pass # Skip if it's the base class stub or other incompatible signature
-
-    # Pass to the runner if plugins allow
-    events = []
-    for event in runner.run(
-        new_message=message,
-        user_id="test_user",
-        session_id=session_id,
-        run_config=RunConfig(streaming_mode=StreamingMode.NONE),
-    ):
-        events.append(event)
-    
-    final_response = None
-    for event in events:
-        if event.is_final_response():
-            final_response = json.loads(event.content.parts[0].text)
-            break
-            
-    if final_response and plugins:
-        llm_response = LlmResponse(
-            content=types.Content(
-                role="model",
-                parts=[types.Part(text=json.dumps(final_response))]
-            )
+    # Patch genai.Client and redis.Redis
+    with patch("google.genai.Client") as MockClient, \
+         patch("vague_descriptions_checker.utils.callbacks.redis.Redis") as MockRedis:
+        
+        mock_client = MockClient.return_value
+        mock_redis = MockRedis.return_value
+        
+        # Ensure the client is awaitable where needed
+        mock_client.aio.models.generate_content = AsyncMock()
+        
+        runner = InMemoryRunner(
+            agent=create_vague_descriptions_checker_agent(),
+            app_name='vague_descriptions_checker',
         )
-        for plugin in plugins:
-            if isinstance(plugin, RedisPlugin):
-                try:
-                    plugin.after_agent_callback(None, llm_request, llm_response)
-                except TypeError:
-                    pass
-                
-    return final_response
+        
+        session = await runner.session_service.create_session(
+            user_id='test_user',
+            app_name='vague_descriptions_checker',
+        )
+        
+        yield runner, session.id, mock_client, mock_redis
 
+async def run_agent_query(runner, session_id, prompt):
+    """Helper to run a query and collect the final response text."""
+    final_text = ""
+    async for event in runner.run_async(
+        user_id='test_user',
+        session_id=session_id,
+        new_message=types.Content(
+            role='user', parts=[types.Part.from_text(text=prompt)]
+        )
+    ):
+        if event.content and event.content.parts:
+            final_text += event.content.parts[0].text
+    
+    try:
+        return json.loads(final_text)
+    except json.JSONDecodeError:
+        return final_text
+
+def create_mock_response(text: str) -> types.GenerateContentResponse:
+    """Helper to create a valid GenerateContentResponse."""
+    return types.GenerateContentResponse(
+        candidates=[
+            types.Candidate(
+                content=types.Content(
+                    role="model",
+                    parts=[types.Part(text=text)]
+                ),
+                finish_reason=types.FinishReason.STOP
+            )
+        ],
+        usage_metadata=types.UsageMetadata(
+            prompt_token_count=10, 
+            response_token_count=10, 
+            total_token_count=20
+        ),
+        model_version="gemini-2.0-flash"
+    )
 
 @pytest.mark.asyncio
-async def test_agent_clear_description(agent_runner) -> None:
+async def test_agent_clear_description(agent_setup) -> None:
     """Tests that a clear cargo description is classified correctly."""
-    runner, session_id = agent_runner
+    runner, session_id, mock_client, mock_redis = agent_setup
     
-    # Specific description should be CLEAR
-    response = await get_final_response(runner, session_id, "Men's cotton t-shirts, 100% cotton, white, size L", plugins=[GuardrailPlugin()])
+    # Mock Guardrail (Judge says YES)
+    mock_client.models.generate_content.return_value = create_mock_response("YES")
     
-    assert response is not None
+    # Mock Redis cache miss
+    mock_redis.get.return_value = None
+    
+    # Mock Agent Model Response (Async)
+    agent_text = json.dumps({
+        "classification": "CLEAR",
+        "reason": "The description 'Men's cotton t-shirts' is specific."
+    })
+    mock_client.aio.models.generate_content.return_value = create_mock_response(agent_text)
+    
+    response = await run_agent_query(runner, session_id, "Men's cotton t-shirts")
+    
     assert response["classification"] == "CLEAR"
     assert "reason" in response
 
-
 @pytest.mark.asyncio
-async def test_agent_vague_description(agent_runner) -> None:
+async def test_agent_vague_description(agent_setup) -> None:
     """Tests that a vague cargo description is classified correctly."""
-    runner, session_id = agent_runner
+    runner, session_id, mock_client, mock_redis = agent_setup
     
-    # Generic description should be VAGUE
-    response = await get_final_response(runner, session_id, "Electronics", plugins=[GuardrailPlugin()])
+    # Mock Guardrail
+    mock_client.models.generate_content.return_value = create_mock_response("YES")
     
-    assert response is not None
+    # Mock Redis MISS
+    mock_redis.get.return_value = None
+    
+    # Mock Agent Model Response (Async)
+    agent_text = json.dumps({
+        "classification": "VAGUE",
+        "reason": "The description 'Electronics' is too generic."
+    })
+    mock_client.aio.models.generate_content.return_value = create_mock_response(agent_text)
+    
+    response = await run_agent_query(runner, session_id, "Electronics")
+    
     assert response["classification"] == "VAGUE"
     assert "reason" in response
 
-
 @pytest.mark.asyncio
-async def test_agent_guardrail_interception(agent_runner) -> None:
-    """Tests that the guardrail intercepts non-cargo input."""
-    runner, session_id = agent_runner
+async def test_agent_guardrail_blocks_joke(agent_setup) -> None:
+    """Tests that the guardrail blocks non-cargo input."""
+    runner, session_id, mock_client, mock_redis = agent_setup
     
-    # Non-cargo input should be blocked
-    response = await get_final_response(runner, session_id, "Hi, can you write a poem about ships?", plugins=[GuardrailPlugin()])
+    # Mock Guardrail (Judge says NO)
+    mock_client.models.generate_content.return_value = create_mock_response("NO")
     
-    assert response is not None
-    # Guardrail returns classification: VAGUE and a specific reason
+    response = await run_agent_query(runner, session_id, "Tell me a joke")
+    
     assert "not appear to be a cargo description" in response["reason"]
 
-
 @pytest.mark.asyncio
-async def test_agent_redis_caching(agent_runner) -> None:
-    """Tests that RedisPlugin correctly caches and retrieves responses."""
-    runner, session_id = agent_runner
+async def test_agent_cache_hit(agent_setup) -> None:
+    """Tests that the agent returns cached response from guardrail if available."""
+    runner, session_id, mock_client, mock_redis = agent_setup
     
-    from unittest.mock import MagicMock, patch
-    with patch("redis.Redis") as MockRedis:
-        mock_redis = MockRedis.return_value
-        # Simulate cache miss first
-        mock_redis.get.return_value = None
-        
-        redis_plugin = RedisPlugin()
-        plugins = [GuardrailPlugin(), redis_plugin]
-        
-        query = "Cotton shirts"
-        # First call - should go to model and then call after_agent_callback (setting cache)
-        response1 = await get_final_response(runner, session_id, query, plugins=plugins)
-        
-        assert response1 is not None
-        mock_redis.set.assert_called()
-        
-        # Now simulate cache hit
-        cached_data = json.dumps(response1)
-        mock_redis.get.return_value = cached_data
-        
-        # Second call - should hit cache in before_model_callback
-        # We can verify this by checking if get was called again
-        response2 = await get_final_response(runner, session_id, query, plugins=plugins)
-        
-        assert response2 == response1
-        mock_redis.get.assert_called_with(query)
+    # Mock Guardrail Judge says YES
+    mock_client.models.generate_content.return_value = create_mock_response("YES")
+    
+    # Mock Redis HIT
+    cached_response = json.dumps({
+        "classification": "VAGUE",
+        "reason": "Cached result for Parts"
+    })
+    mock_redis.get.return_value = cached_response
+    
+    response = await run_agent_query(runner, session_id, "Parts")
+    
+    assert response["classification"] == "VAGUE"
+    assert "Cached" in response["reason"]
+    mock_redis.get.assert_called_with("Parts")

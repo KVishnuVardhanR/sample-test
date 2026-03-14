@@ -1,18 +1,39 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import pytest
 import json
 from unittest.mock import MagicMock, patch
 import requests
+import os
 from vague_descriptions_checker.utils.web_fetch import fetch_cbp_content
 
 @pytest.fixture
 def mock_env():
+    """Fixture to mock environment variables."""
+    # Ensure REDIS_HOST is set to localhost as requested by user
+    os.environ["REDIS_HOST"] = "localhost"
+    
     with patch("os.getenv") as mock_get:
         def side_effect(key, default=None):
             if key == "CBP_URL":
                 return "https://example.com"
             if key == "CBP_GCS_URL":
                 return "gs://bucket/cbp_data.json"
-            return default
+            if key == "REDIS_HOST":
+                return "localhost"
+            return os.environ.get(key, default)
         mock_get.side_effect = side_effect
         yield mock_get
 
@@ -30,15 +51,14 @@ def test_fetch_cbp_content_success(mock_env):
         # Mock GCS
         mock_fs = MockGCS.return_value
         mock_file = MagicMock()
-        mock_fs.open.return_value.__enter__.return_value = mock_file
+        mock_file.__enter__.return_value = mock_file # Support CM
+        mock_fs.open.return_value = mock_file
         
         content = fetch_cbp_content()
         
         assert content == "Some content"
         mock_requests_get.assert_called_once()
         mock_fs.open.assert_called_with("gs://bucket/cbp_data.json", 'w')
-        # Check if json.dump was called on the mock_file
-        # (Alternatively, we could use a real buffer if needed)
 
 def test_fetch_cbp_content_fallback(mock_env):
     """Test website fetch failure and GCS fallback."""
@@ -52,8 +72,8 @@ def test_fetch_cbp_content_fallback(mock_env):
         mock_fs = MockGCS.return_value
         mock_fs.exists.return_value = True
         mock_file = MagicMock()
-        mock_file.read.return_value = json.dumps({"content": "cached content"})
-        mock_fs.open.return_value.__enter__.return_value = mock_file
+        mock_file.__enter__.return_value = mock_file
+        mock_fs.open.return_value = mock_file
         
         # We need to mock json.load as well if it's used with the mock_file
         with patch("json.load") as mock_json_load:

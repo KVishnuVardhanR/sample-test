@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import json
 from unittest.mock import MagicMock, patch
 
@@ -19,13 +20,14 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.models import LlmRequest
 from google.genai import types
 
-from vague_descriptions_checker.utils.plugins import GuardrailPlugin
+from vague_descriptions_checker.utils.callbacks import CallbacksManager
 
 
 def test_guardrail_blocked_input() -> None:
     """Tests that the guardrail blocks non-cargo input."""
-    
+    os.environ["REDIS_HOST"] = "localhost"
     mock_context = MagicMock(spec=CallbackContext)
+    mock_context.state = {}
     
     # Create an LlmRequest with a non-cargo message
     user_message = types.Content(
@@ -36,13 +38,15 @@ def test_guardrail_blocked_input() -> None:
     mock_request.contents = [user_message]
     
     # Mock the Gemini client to return "NO"
-    with patch("vague_descriptions_checker.utils.plugins.genai.Client") as MockClient:
+    with patch("vague_descriptions_checker.utils.callbacks.genai.Client") as MockClient, \
+         patch("vague_descriptions_checker.utils.callbacks.redis.Redis") as MockRedis:
         mock_client_instance = MockClient.return_value
         mock_response = MagicMock()
         mock_response.text = "NO"
         mock_client_instance.models.generate_content.return_value = mock_response
         
-        response = GuardrailPlugin().before_agent_callback(mock_context, mock_request)
+        manager = CallbacksManager()
+        response = manager.guardrail_function(mock_context, mock_request)
         
         assert response is not None
         assert response.content.role == "model"
@@ -55,8 +59,9 @@ def test_guardrail_blocked_input() -> None:
 
 def test_guardrail_allowed_input() -> None:
     """Tests that the guardrail allows valid cargo descriptions."""
-    
+    os.environ["REDIS_HOST"] = "localhost"
     mock_context = MagicMock(spec=CallbackContext)
+    mock_context.state = {}
     
     # Create an LlmRequest with a valid cargo description
     user_message = types.Content(
@@ -67,22 +72,29 @@ def test_guardrail_allowed_input() -> None:
     mock_request.contents = [user_message]
     
     # Mock the Gemini client to return "YES"
-    with patch("vague_descriptions_checker.utils.plugins.genai.Client") as MockClient:
+    with patch("vague_descriptions_checker.utils.callbacks.genai.Client") as MockClient, \
+         patch("vague_descriptions_checker.utils.callbacks.redis.Redis") as MockRedis:
         mock_client_instance = MockClient.return_value
         mock_response = MagicMock()
         mock_response.text = "YES"
         mock_client_instance.models.generate_content.return_value = mock_response
         
-        response = GuardrailPlugin().before_agent_callback(mock_context, mock_request)
+        # Mock Redis MISS
+        MockRedis.return_value.get.return_value = None
         
-        # Guardrail should return None to let the original call proceed
+        manager = CallbacksManager()
+        response = manager.guardrail_function(mock_context, mock_request)
+        
+        # Guardrail should return None to let the original call proceed after YES judges
         assert response is None
 
 
 def test_guardrail_exception_fail_open() -> None:
     """Tests that the guardrail fails open if the judge call errors."""
-    
+    os.environ["REDIS_HOST"] = "localhost"
     mock_context = MagicMock(spec=CallbackContext)
+    mock_context.state = {}
+    
     user_message = types.Content(
         role="user", 
         parts=[types.Part.from_text(text="Electronics")]
@@ -91,11 +103,13 @@ def test_guardrail_exception_fail_open() -> None:
     mock_request.contents = [user_message]
     
     # Mock the Gemini client to raise an exception
-    with patch("vague_descriptions_checker.utils.plugins.genai.Client") as MockClient:
+    with patch("vague_descriptions_checker.utils.callbacks.genai.Client") as MockClient, \
+         patch("vague_descriptions_checker.utils.callbacks.redis.Redis") as MockRedis:
         mock_client_instance = MockClient.return_value
         mock_client_instance.models.generate_content.side_effect = Exception("API Error")
         
-        response = GuardrailPlugin().before_agent_callback(mock_context, mock_request)
+        manager = CallbacksManager()
+        response = manager.guardrail_function(mock_context, mock_request)
         
         # Should return None (fail open) on exception
         assert response is None

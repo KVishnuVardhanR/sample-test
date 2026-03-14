@@ -15,32 +15,63 @@
 from google.adk.agents import LlmAgent, BaseAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.genai import types
-from google.adk.models import LlmResponse, LlmRequest
-from google.adk.tools.url_context_tool import url_context
-from .utils.prompt import SYSTEM_PROMPT
-from .utils.web_fetch import fetch_cbp_content
-# from .utils.guardrails import guardrail_function
+from vague_descriptions_checker.utils.prompt import SYSTEM_PROMPT
+from vague_descriptions_checker.utils.web_fetch import fetch_cbp_content
+from vague_descriptions_checker.utils.callbacks import CallbacksManager
 import os
-import json
 from pydantic import BaseModel, Field
-from typing import Literal, Optional
+from typing import Literal
+# from google.adk.runners import InMemoryRunner
+# import asyncio
 
 class VagueClassification(BaseModel):
     classification: Literal["CLEAR", "VAGUE"] = Field(description="The classification of the cargo description")
     reason: str = Field(description="Detailed explanation of classification grounded based on the CBP website information")
 
 def create_vague_descriptions_checker_agent(name: str = "vague_descriptions_checker") -> BaseAgent:
+    callbacks_manager = CallbacksManager()
+    
     root_agent = LlmAgent(
-    name="vague_descriptions_checker",  
-    model=os.getenv("GOOGLE_GENAI_MODEL"),
-    instruction=SYSTEM_PROMPT,
-    tools=[fetch_cbp_content],
-    output_schema=VagueClassification,
-    generate_content_config=types.GenerateContentConfig(
-        seed=os.getenv("GOOGLE_GENAI_SEED"),
-        temperature=os.getenv("GOOGLE_GENAI_TEMPERATURE"),
-    ),
-        # before_model_callback=guardrail_function,
+        name="vague_descriptions_checker",  
+        model=os.getenv("GOOGLE_GENAI_MODEL", "gemini-2.5-flash"),
+        instruction=SYSTEM_PROMPT,
+        tools=[fetch_cbp_content],
+        output_schema=VagueClassification,
+        generate_content_config=types.GenerateContentConfig(
+            seed=os.getenv("GOOGLE_GENAI_SEED", 123),
+            temperature=os.getenv("GOOGLE_GENAI_TEMPERATURE", 0.01),
+        ),
+        before_model_callback=callbacks_manager.guardrail_function,
+        after_model_callback=callbacks_manager.handle_cache_miss,
     )
 
     return root_agent
+
+root_agent = create_vague_descriptions_checker_agent()
+# async def main():
+#     """Main entry point for the agent."""
+#     prompt = 'hello world'
+#     runner = InMemoryRunner(
+#         agent=create_vague_descriptions_checker_agent(),
+#         app_name='vague_descriptions_checker',
+#     )
+
+#     # The rest is the same as starting a regular ADK runner.
+#     session = await runner.session_service.create_session(
+#         user_id='user',
+#         app_name='vague_descriptions_checker',
+#     )
+
+#     async for event in runner.run_async(
+#         user_id='user',
+#         session_id=session.id,
+#         new_message=types.Content(
+#             role='user', parts=[types.Part.from_text(text=prompt)]
+#         )
+#     ):
+#         print(f'** Got event from {event.author}')
+#         if event.content and event.content.parts:
+#             print(f"Content: {event.content.parts[0].text}")
+
+# if __name__ == "__main__":
+#     asyncio.run(main())
