@@ -47,8 +47,9 @@ else
     echo "LOG_LEVEL: \"DEBUG\"" > env-vars.yaml
 fi
 
-# Deploy to Cloud Run
-echo "🚢 Deploying to Cloud Run..."
+
+# Deploy the NEW revision as 'green' with 0% traffic
+echo "🚢 Deploying new green version..."
 gcloud run deploy ${SERVICE_NAME} \
     --image ${IMAGE_NAME} \
     --region ${REGION} \
@@ -56,7 +57,9 @@ gcloud run deploy ${SERVICE_NAME} \
     --allow-unauthenticated \
     --env-vars-file env-vars.yaml \
     --vpc-connector="vpc-conn" \
-    --vpc-egress="private-ranges-only"
+    --vpc-egress="private-ranges-only" \
+    --tag green \
+    --no-traffic
 
 # Cleanup
 rm env-vars.yaml
