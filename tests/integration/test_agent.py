@@ -19,7 +19,7 @@ import pytest_asyncio
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 from unittest.mock import MagicMock, patch, AsyncMock
-
+from google.adk.models import LlmResponse
 from vague_descriptions_checker.agent import create_vague_descriptions_checker_agent
 
 @pytest_asyncio.fixture
@@ -27,9 +27,10 @@ async def agent_setup():
     """Fixture to set up the InMemoryRunner and mocks."""
     os.environ["REDIS_HOST"] = "localhost"
     
-    # Patch genai.Client and redis.Redis
+    # Patch genai.Client, redis.Redis and LiteLlm.generate_content_async
     with patch("google.genai.Client") as MockClient, \
-         patch("vague_descriptions_checker.utils.callbacks.redis.Redis") as MockRedis:
+         patch("vague_descriptions_checker.utils.callbacks.redis.Redis") as MockRedis, \
+         patch("google.adk.models.lite_llm.LiteLlm.generate_content_async") as MockLiteLlmGenerateAsync:
         
         mock_client = MockClient.return_value
         mock_redis = MockRedis.return_value
@@ -47,7 +48,7 @@ async def agent_setup():
             app_name='vague_descriptions_checker',
         )
         
-        yield runner, session.id, mock_client, mock_redis
+        yield runner, session.id, mock_client, mock_redis, MockLiteLlmGenerateAsync
 
 async def run_agent_query(runner, session_id, prompt):
     """Helper to run a query and collect the final response text."""
@@ -60,7 +61,9 @@ async def run_agent_query(runner, session_id, prompt):
         )
     ):
         if event.content and event.content.parts:
-            final_text += event.content.parts[0].text
+            part_text = event.content.parts[0].text
+            if part_text:
+                final_text += part_text
     
     try:
         return json.loads(final_text)
@@ -87,10 +90,19 @@ def create_mock_response(text: str) -> types.GenerateContentResponse:
         model_version="gemini-2.0-flash"
     )
 
+async def mock_lite_llm_response(text: str):
+    """Async generator to simulate LiteLlm.generate_content_async yielding an LlmResponse."""
+    yield LlmResponse(
+        content=types.Content(
+            role="model",
+            parts=[types.Part(text=text)]
+        )
+    )
+
 @pytest.mark.asyncio
 async def test_agent_clear_description(agent_setup) -> None:
     """Tests that a clear cargo description is classified correctly."""
-    runner, session_id, mock_client, mock_redis = agent_setup
+    runner, session_id, mock_client, mock_redis, mock_lite_llm = agent_setup
     
     # Mock Guardrail (Judge says YES)
     mock_client.models.generate_content.return_value = create_mock_response("YES")
@@ -98,12 +110,12 @@ async def test_agent_clear_description(agent_setup) -> None:
     # Mock Redis cache miss
     mock_redis.get.return_value = None
     
-    # Mock Agent Model Response (Async)
+    # Mock LiteLlm Response (Async)
     agent_text = json.dumps({
         "classification": "CLEAR",
         "reason": "The description 'Men's cotton t-shirts' is specific."
     })
-    mock_client.aio.models.generate_content.return_value = create_mock_response(agent_text)
+    mock_lite_llm.return_value = mock_lite_llm_response(agent_text)
     
     response = await run_agent_query(runner, session_id, "Men's cotton t-shirts")
     
@@ -113,7 +125,7 @@ async def test_agent_clear_description(agent_setup) -> None:
 @pytest.mark.asyncio
 async def test_agent_vague_description(agent_setup) -> None:
     """Tests that a vague cargo description is classified correctly."""
-    runner, session_id, mock_client, mock_redis = agent_setup
+    runner, session_id, mock_client, mock_redis, mock_lite_llm = agent_setup
     
     # Mock Guardrail
     mock_client.models.generate_content.return_value = create_mock_response("YES")
@@ -121,12 +133,12 @@ async def test_agent_vague_description(agent_setup) -> None:
     # Mock Redis MISS
     mock_redis.get.return_value = None
     
-    # Mock Agent Model Response (Async)
+    # Mock LiteLlm Response
     agent_text = json.dumps({
         "classification": "VAGUE",
         "reason": "The description 'Electronics' is too generic."
     })
-    mock_client.aio.models.generate_content.return_value = create_mock_response(agent_text)
+    mock_lite_llm.return_value = mock_lite_llm_response(agent_text)
     
     response = await run_agent_query(runner, session_id, "Electronics")
     
@@ -136,7 +148,7 @@ async def test_agent_vague_description(agent_setup) -> None:
 @pytest.mark.asyncio
 async def test_agent_guardrail_blocks_joke(agent_setup) -> None:
     """Tests that the guardrail blocks non-cargo input."""
-    runner, session_id, mock_client, mock_redis = agent_setup
+    runner, session_id, mock_client, mock_redis, mock_lite_llm = agent_setup
     
     # Mock Guardrail (Judge says NO)
     mock_client.models.generate_content.return_value = create_mock_response("NO")
@@ -148,7 +160,7 @@ async def test_agent_guardrail_blocks_joke(agent_setup) -> None:
 @pytest.mark.asyncio
 async def test_agent_cache_hit(agent_setup) -> None:
     """Tests that the agent returns cached response from guardrail if available."""
-    runner, session_id, mock_client, mock_redis = agent_setup
+    runner, session_id, mock_client, mock_redis, mock_lite_llm = agent_setup
     
     # Mock Guardrail Judge says YES
     mock_client.models.generate_content.return_value = create_mock_response("YES")
