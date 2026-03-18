@@ -89,7 +89,7 @@ class CallbacksManager:
             # 2. If it is a cargo description, check Redis cache
             try:
                 cache_key = self._generate_cache_key(last_user_message)
-cached_response = self.client.get(cache_key)
+                cached_response = self.client.get(cache_key)
                 if cached_response:
                     logger.info("Cache hit", extra={
                         "json_fields": {
@@ -128,7 +128,7 @@ cached_response = self.client.get(cache_key)
             if agent_response:
                 # Cache the response with the user message as the key
                 cache_key = self._generate_cache_key(prompt)
-self.client.set(cache_key, agent_response)
+                self.client.set(cache_key, agent_response)
                 logger.info("Storing response in cache", extra={
                     "json_fields": {
                         "prompt": prompt[:50],

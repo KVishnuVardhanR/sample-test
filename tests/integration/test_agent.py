@@ -21,6 +21,7 @@ from google.genai import types
 from unittest.mock import MagicMock, patch, AsyncMock
 
 from vague_descriptions_checker.agent import create_vague_descriptions_checker_agent
+from vague_descriptions_checker.utils.callbacks import CallbacksManager
 
 @pytest_asyncio.fixture
 async def agent_setup():
@@ -164,4 +165,8 @@ async def test_agent_cache_hit(agent_setup) -> None:
     
     assert response["classification"] == "VAGUE"
     assert "Cached" in response["reason"]
-    mock_redis.get.assert_called_with("Parts")
+    
+    # Generate the expected key using the same logic
+    manager = CallbacksManager()
+    expected_key = manager._generate_cache_key("Parts")
+    mock_redis.get.assert_called_with(expected_key)
