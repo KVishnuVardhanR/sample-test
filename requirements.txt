@@ -1,5 +1,6 @@
-google-cloud-aiplatform[adk,agent_engines]
-redis
-requests
-gcsfs
-google-cloud-logging
+google-cloud-aiplatform[adk,agent_engines]==1.139.0
+litellm==1.82.3
+redis==7.3.0
+requests==2.32.5
+gcsfs==2026.2.0
+google-cloud-logging==3.13.0

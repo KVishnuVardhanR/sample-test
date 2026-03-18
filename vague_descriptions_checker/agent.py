@@ -22,6 +22,7 @@ from vague_descriptions_checker.utils.callbacks import CallbacksManager
 import os
 from pydantic import BaseModel, Field
 from typing import Literal
+from google.adk.models.lite_llm import LiteLlm
 # from google.adk.runners import InMemoryRunner
 # import asyncio
 
@@ -38,14 +39,14 @@ def create_vague_descriptions_checker_agent(name: str = "vague_descriptions_chec
     
     logger.info("Creating LlmAgent instance", extra={
         "json_fields": {
-            "model": os.getenv("GOOGLE_GENAI_MODEL", "gemini-2.5-flash"),
+            "model": os.getenv("GOOGLE_GENAI_MODEL", "gemini-2.5-flash-lite"),
             "temperature": os.getenv("GOOGLE_GENAI_TEMPERATURE", 0.01)
         }
     })
     
     root_agent = LlmAgent(
         name="vague_descriptions_checker",  
-        model=os.getenv("GOOGLE_GENAI_MODEL", "gemini-2.5-flash"),
+        model=LiteLlm(model=f"gemini/{os.getenv("GOOGLE_GENAI_MODEL", "gemini-2.5-flash-lite")}"),# LiteLlm(model="openai/gpt-4o"), LiteLlm(model="anthropic/claude-3-haiku-20240307")
         instruction=SYSTEM_PROMPT,
         tools=[fetch_cbp_content],
         output_schema=VagueClassification,
@@ -56,7 +57,7 @@ def create_vague_descriptions_checker_agent(name: str = "vague_descriptions_chec
             retry_options=types.HttpRetryOptions(initial_delay=1, attempts=2),
             ),
         ),
-        before_model_callback=callbacks_manager.guardrail_function,
+        before_model_callback=callbacks_manager.guardrail_with_cache_hit_function,
         after_model_callback=callbacks_manager.handle_cache_miss,
     )
 

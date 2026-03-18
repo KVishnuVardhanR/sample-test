@@ -29,8 +29,8 @@ def mock_callbacks_manager():
         manager = CallbacksManager()
         yield manager, mock_client
 
-def test_cache_hit_in_guardrail_function(mock_callbacks_manager):
-    """Test cache hit in guardrail_function."""
+def test_cache_hit_in_guardrail_with_cache_hit_function(mock_callbacks_manager):
+    """Test cache hit in guardrail_with_cache_hit_function."""
     manager, mock_redis = mock_callbacks_manager
     mock_context = MagicMock(spec=CallbackContext)
     mock_context.state = {}
@@ -49,14 +49,14 @@ def test_cache_hit_in_guardrail_function(mock_callbacks_manager):
         
         mock_redis.get.return_value = "cached response"
         
-        response = manager.guardrail_function(mock_context, mock_request)
+        response = manager.guardrail_with_cache_hit_function(mock_context, mock_request)
         
         assert response is not None
         assert response.content.parts[0].text == "cached response"
         mock_redis.get.assert_called_with("test prompt")
 
-def test_cache_miss_in_guardrail_function(mock_callbacks_manager):
-    """Test cache miss in guardrail_function."""
+def test_cache_miss_in_guardrail_with_cache_hit_function(mock_callbacks_manager):
+    """Test cache miss in guardrail_with_cache_hit_function."""
     manager, mock_redis = mock_callbacks_manager
     mock_context = MagicMock(spec=CallbackContext)
     mock_context.state = {}
@@ -75,7 +75,7 @@ def test_cache_miss_in_guardrail_function(mock_callbacks_manager):
         
         mock_redis.get.return_value = None
         
-        response = manager.guardrail_function(mock_context, mock_request)
+        response = manager.guardrail_with_cache_hit_function(mock_context, mock_request)
         
         assert response is None
         mock_redis.get.assert_called_with("new prompt")
@@ -96,8 +96,8 @@ def test_handle_cache_miss_updates_redis(mock_callbacks_manager):
     
     mock_redis.set.assert_called_with("test prompt", "agent response")
 
-def test_redis_fail_open_in_guardrail_function(mock_callbacks_manager):
-    """Test that Redis errors do not block execution (fail open) in guardrail_function."""
+def test_redis_fail_open_in_guardrail_with_cache_hit_function(mock_callbacks_manager):
+    """Test that Redis errors do not block execution (fail open) in guardrail_with_cache_hit_function."""
     manager, mock_redis = mock_callbacks_manager
     mock_context = MagicMock(spec=CallbackContext)
     mock_context.state = {}
@@ -115,7 +115,7 @@ def test_redis_fail_open_in_guardrail_function(mock_callbacks_manager):
         
         mock_redis.get.side_effect = Exception("Redis error")
         
-        response = manager.guardrail_function(mock_context, mock_request)
+        response = manager.guardrail_with_cache_hit_function(mock_context, mock_request)
         
         # Should return None (fail open) to proceed with normal LLM call
         assert response is None

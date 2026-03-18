@@ -46,7 +46,7 @@ def test_guardrail_blocked_input() -> None:
         mock_client_instance.models.generate_content.return_value = mock_response
         
         manager = CallbacksManager()
-        response = manager.guardrail_function(mock_context, mock_request)
+        response = manager.guardrail_with_cache_hit_function(mock_context, mock_request)
         
         assert response is not None
         assert response.content.role == "model"
@@ -83,7 +83,7 @@ def test_guardrail_allowed_input() -> None:
         MockRedis.return_value.get.return_value = None
         
         manager = CallbacksManager()
-        response = manager.guardrail_function(mock_context, mock_request)
+        response = manager.guardrail_with_cache_hit_function(mock_context, mock_request)
         
         # Guardrail should return None to let the original call proceed after YES judges
         assert response is None
@@ -109,7 +109,7 @@ def test_guardrail_exception_fail_open() -> None:
         mock_client_instance.models.generate_content.side_effect = Exception("API Error")
         
         manager = CallbacksManager()
-        response = manager.guardrail_function(mock_context, mock_request)
+        response = manager.guardrail_with_cache_hit_function(mock_context, mock_request)
         
         # Should return None (fail open) on exception
         assert response is None

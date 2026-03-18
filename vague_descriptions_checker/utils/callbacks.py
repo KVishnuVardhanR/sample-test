@@ -23,7 +23,7 @@ class CallbacksManager:
             socket_connect_timeout=5
         )
 
-    def guardrail_function(self, callback_context: CallbackContext, llm_request: LlmRequest) -> Optional[LlmResponse]:
+    def guardrail_with_cache_hit_function(self, callback_context: CallbackContext, llm_request: LlmRequest) -> Optional[LlmResponse]:
         """
         Guardrail to ensure the user input is a cargo description using an LLM as a judge.
         Also checks Redis cache if input is a cargo description.

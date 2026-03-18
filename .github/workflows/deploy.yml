@@ -1,0 +1,95 @@
+# .github/workflows/deploy.yml - Deploy to Cloud Run on push to main
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+
+# Required for Workload Identity Federation
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: chat-app-demo-459315
+  REGION: us-central1
+  SERVICE_NAME: vague-descriptions-checker-api
+  REGISTRY: us-central1-docker.pkg.dev
+  REPOSITORY: cloud-run-images
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # Check out the repository code
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Authenticate to GCP using Workload Identity Federation
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "projects/781395648013/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
+          service_account: "github-deployer@chat-app-demo-459315.iam.gserviceaccount.com"
+
+      # Set up gcloud CLI
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Configure Docker to use gcloud for authentication
+      - name: Configure Docker
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      # Build the Docker image
+      - name: Build
+        run: |
+          docker build \
+            -t ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
+            -t ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:latest \
+            .
+
+      # Push to Artifact Registry
+      - name: Push
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:latest
+
+
+      # NEW STEP: Ported from your deploy.sh script
+      - name: Prepare environment variables
+        run: |
+          echo "📝 Preparing environment variables..."
+          if [ -f .env ]; then
+              # Strip comments/empty lines and convert to YAML format
+              grep -v '^#' .env | grep -v '^[[:space:]]*$' | \
+              sed 's/ *= */: /' | \
+              sed 's/: \(.*\)/: "\1"/' | \
+              sed 's/""/"/g' > env-vars.yaml
+              echo "LOG_LEVEL: \"DEBUG\"" >> env-vars.yaml
+          else
+              echo "LOG_LEVEL: \"DEBUG\"" > env-vars.yaml
+          fi
+
+      # UPDATED STEP: Includes the new params from deploy.sh
+      - name: Deploy
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
+            --region=${{ env.REGION }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --env-vars-file=env-vars.yaml \
+            --vpc-connector="vpc-conn" \
+            --vpc-egress="private-ranges-only" \
+            --tag=green \
+            --no-traffic
+
+      # Output the service URL
+      - name: Show URL
+        run: |
+          echo "Service URL:"
+          gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region=${{ env.REGION }} \
+            --format="value(status.url)"
