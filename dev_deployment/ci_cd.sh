@@ -6,7 +6,8 @@ gcloud iam service-accounts create github-deployer \
 # Create the Artifact Registry repository
 gcloud artifacts repositories create cloud-run-images \
   --repository-format=docker \
-  --location=us-central1
+  --location=us-central1 \
+  --kms-key="projects/chat-app-demo-459315/locations/us-central1/keyRings/vague-des-checker-keyring/cryptoKeys/vague-des-checker-key"
 
 # Store the full email for later use
 SA_EMAIL="github-deployer@$(gcloud config get-value project).iam.gserviceaccount.com"
@@ -61,3 +62,32 @@ gcloud iam workload-identity-pools providers describe github-provider \
   --location="global" \
   --workload-identity-pool="github-pool" \
   --format="value(name)"
+
+
+# Create a key ring in the us-central1 region
+gcloud kms keyrings create vague-des-checker-keyring \
+    --location=us-central1 \
+    --project=chat-app-demo-459315
+
+# Create a symmetric encryption key for encrypting storage objects
+gcloud kms keys create vague-des-checker-key \
+    --location=us-central1 \
+    --keyring=vague-des-checker-keyring \
+    --purpose=encryption \
+    --rotation-period=90d \
+    --next-rotation-time=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+90 days") \
+    --project=chat-app-demo-459315
+
+
+# Create the dedicated Runtime SA
+gcloud iam service-accounts create vague-descriptions-checker-app \
+    --display-name="Cloud Run Runtime Identity" \
+    --project=chat-app-demo-459315
+
+# Grant the Cloud Storage service agent permission to encrypt/decrypt with the key
+gcloud kms keys add-iam-policy-binding vague-des-checker-key \
+    --location=us-central1 \
+    --keyring=vague-des-checker-keyring \
+    --member="serviceAccount:vague-descriptions-checker-app@chat-app-demo-459315.iam.gserviceaccount.com" \
+    --role="roles/cloudkms.cryptoKeyEncrypterDecrypter" \
+    --project=chat-app-demo-459315
