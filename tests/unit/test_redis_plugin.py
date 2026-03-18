@@ -53,7 +53,8 @@ def test_cache_hit_in_guardrail_with_cache_hit_function(mock_callbacks_manager):
         
         assert response is not None
         assert response.content.parts[0].text == "cached response"
-        mock_redis.get.assert_called_with("test prompt")
+        expected_key = manager._generate_cache_key("test prompt")
+        mock_redis.get.assert_called_with(expected_key)
 
 def test_cache_miss_in_guardrail_with_cache_hit_function(mock_callbacks_manager):
     """Test cache miss in guardrail_with_cache_hit_function."""
@@ -78,7 +79,8 @@ def test_cache_miss_in_guardrail_with_cache_hit_function(mock_callbacks_manager)
         response = manager.guardrail_with_cache_hit_function(mock_context, mock_request)
         
         assert response is None
-        mock_redis.get.assert_called_with("new prompt")
+        expected_key = manager._generate_cache_key("new prompt")
+        mock_redis.get.assert_called_with(expected_key)
 
 def test_handle_cache_miss_updates_redis(mock_callbacks_manager):
     """Test storage in handle_cache_miss."""
@@ -94,7 +96,8 @@ def test_handle_cache_miss_updates_redis(mock_callbacks_manager):
     
     manager.handle_cache_miss(mock_context, mock_response)
     
-    mock_redis.set.assert_called_with("test prompt", "agent response")
+    expected_key = manager._generate_cache_key("test prompt")
+    mock_redis.set.assert_called_with(expected_key, "agent response")
 
 def test_redis_fail_open_in_guardrail_with_cache_hit_function(mock_callbacks_manager):
     """Test that Redis errors do not block execution (fail open) in guardrail_with_cache_hit_function."""
