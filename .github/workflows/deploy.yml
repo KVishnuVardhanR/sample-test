@@ -65,15 +65,8 @@ jobs:
                   ports:
                   - containerPort: 8080
                     name: h2c
-                  startupProbe:
-                    initialDelaySeconds: 15
-                    periodSeconds: 10
-                    timeoutSeconds: 5
-                    failureThreshold: 30
-                    httpGet:
-                      path: /ready
                   livenessProbe:
-                    initialDelaySeconds: 0
+                    initialDelaySeconds: 10
                     periodSeconds: 30
                     timeoutSeconds: 5
                     failureThreshold: 3
@@ -131,7 +124,7 @@ jobs:
         run: |
           echo "✅ Health check passed. Moving 100% traffic to the latest revision."
           gcloud run services update-traffic ${{ env.SERVICE_NAME }} \
-            --to-latest \
+            --to-tags=canary=5 \
             --region=${{ env.REGION }}
 
       # 5. CLEAN UP OLD REVISIONS (Keep last 5)
