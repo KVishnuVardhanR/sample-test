@@ -6,7 +6,6 @@ on:
     branches:
       - main
 
-# Required for Workload Identity Federation
 permissions:
   contents: read
   id-token: write
@@ -22,11 +21,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      # Check out the repository code
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Authenticate to GCP using Workload Identity Federation
       - name: Authenticate to Google Cloud
         id: auth
         uses: google-github-actions/auth@v2
@@ -34,80 +31,88 @@ jobs:
           workload_identity_provider: "projects/781395648013/locations/global/workloadIdentityPools/github-pool/providers/github-provider"
           service_account: "github-deployer@chat-app-demo-459315.iam.gserviceaccount.com"
 
-      # Set up gcloud CLI
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      # Configure Docker to use gcloud for authentication
       - name: Configure Docker
         run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
 
-      # Build the Docker image
-      - name: Build
+      - name: Build and Push
         run: |
-          docker build \
-            -t ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
-            -t ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:latest \
-            .
+          IMAGE_TAG=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+          docker build -t $IMAGE_TAG .
+          docker push $IMAGE_TAG
 
-      # Push to Artifact Registry
-      - name: Push
+      # 1. GENERATE SERVICE YAML
+      - name: Generate Service YAML
         run: |
-          docker push ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
-          docker push ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:latest
-
-
-      # NEW STEP: Ported from your deploy.sh script
-      - name: Prepare environment variables
-        run: |
-          echo "📝 Preparing environment variables..."
+          cat <<EOF > service.yaml
+          apiVersion: serving.knative.dev/v1
+          kind: Service
+          metadata:
+            name: ${{ env.SERVICE_NAME }}
+            annotations:
+              run.googleapis.com/launch-stage: BETA
+          spec:
+            template:
+              metadata:
+                annotations:
+                  run.googleapis.com/vpc-access-connector: "vpc-conn"
+                  run.googleapis.com/vpc-access-egress: "private-ranges-only"
+              spec:
+                containers:
+                - image: ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+                  ports:
+                  - containerPort: 8080
+                    name: h2c
+                  startupProbe:
+                    initialDelaySeconds: 15
+                    periodSeconds: 10
+                    timeoutSeconds: 5
+                    failureThreshold: 30
+                    httpGet:
+                      path: /ready
+                  livenessProbe:
+                    initialDelaySeconds: 0
+                    periodSeconds: 30
+                    timeoutSeconds: 5
+                    failureThreshold: 3
+                    httpGet:
+                      path: /health
+                  env:
+          EOF
           if [ -f .env ]; then
-              # Strip comments/empty lines and convert to YAML format
-              grep -v '^#' .env | grep -v '^[[:space:]]*$' | \
-              sed 's/ *= */: /' | \
-              sed 's/: \(.*\)/: "\1"/' | \
-              sed 's/""/"/g' > env-vars.yaml
-              echo "LOG_LEVEL: \"DEBUG\"" >> env-vars.yaml
-          else
-              echo "LOG_LEVEL: \"DEBUG\"" > env-vars.yaml
+            grep -v '^#' .env | grep -v '^[[:space:]]*$' | while read -r line; do
+              key=$(echo $line | cut -d '=' -f 1)
+              value=$(echo $line | cut -d '=' -f 2- | sed 's/^"//;s/"$//')
+              echo "                  - name: $key" >> service.yaml
+              echo "                    value: \"$value\"" >> service.yaml
+            done
           fi
+          echo "                  - name: LOG_LEVEL" >> service.yaml
+          echo "                    value: \"DEBUG\"" >> service.yaml
 
-      # UPDATED STEP: Includes the new params from deploy.sh
-      # Note: --use-http2 for features such as gRPC support, Bidirectional Streaming, Multiplexing, Server Push
-      - name: Deploy
+      # 2. DEPLOY WITHOUT TRAFFIC (Initial Safety Deployment)
+      - name: Deploy Revision (No Traffic)
         run: |
+          gcloud run services replace service.yaml --region=${{ env.REGION }}
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
             --region=${{ env.REGION }} \
-            --platform=managed \
-            --allow-unauthenticated \
-            --env-vars-file=env-vars.yaml \
-            --vpc-connector="vpc-conn" \
-            --vpc-egress="private-ranges-only" \
-            --tag=green \
-            --no-traffic \
-            --use-http2 \ 
-            --health-check-type=http \
-            --liveness-probe-path=/health \
-            --startup-probe-path=/health \
-            --startup-probe-initial-delay=30s \
-            --startup-probe-timeout=5s \
-            --startup-probe-failure-threshold=10
+            --tag=canary \
+            --no-traffic
 
-      - name: Validate and Migrate Traffic
+      # 3. SMOKE TEST (Automatic Rollback Logic)
+      - name: Run Smoke Tests
         run: |
-          # 1. Get the Service URL
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --format='value(status.url)')
+          CANARY_URL="https://canary---${SERVICE_URL#https://}/health"
           
-          # 2. Construct the Tagged URL (e.g., https://green---myapp.a.run.app)
-          TAG_URL="https://green---${SERVICE_URL#https://}"
+          echo "🔍 Testing canary revision at: $CANARY_URL"
           
-          echo "🔍 Performing Smoke Test on new revision at: $TAG_URL"
-          
-          # 3. Simple Health Check (Retries 5 times)
           success=false
           for i in {1..5}; do
-            if curl -f "$TAG_URL/health"; then
+            if curl -f "$CANARY_URL"; then
               success=true
               break
             fi
@@ -116,30 +121,28 @@ jobs:
           done
 
           if [ "$success" = false ]; then
-            echo "❌ New revision is unstable. Automatic Rollback: Deleting tag and keeping old traffic."
-            gcloud run services update-traffic ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --remove-tags=green
+            echo "❌ Smoke test failed. Rollback: Removing canary tag and halting rollout."
+            gcloud run services update-traffic ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --remove-tags=canary
             exit 1
           fi
 
-          echo "✅ Smoke test passed! Splitting traffic..."
-          
-          # 4. Canary Release: 5% to Green, 90% to current
-          gcloud run services update-traffic ${{ env.SERVICE_NAME }} \
-            --region ${{ env.REGION }} \
-            --to-revisions=green=5
-          
-          # (Optional) Add a soak period here
-          # sleep 60 
-
-          # 5. Full Rollout: Shift 100% to the latest revision
-          gcloud run services update-traffic ${{ env.SERVICE_NAME }} \
-            --region ${{ env.REGION }} \
-            --to-latest
-
-      # Output the service URL
-      - name: Show URL
+      # 4. TRAFFIC SPLIT & FULL ROLLOUT
+      - name: Route Traffic
         run: |
-          echo "Service URL:"
-          gcloud run services describe ${{ env.SERVICE_NAME }} \
+          echo "✅ Health check passed. Moving 100% traffic to the latest revision."
+          gcloud run services update-traffic ${{ env.SERVICE_NAME }} \
+            --to-latest \
+            --region=${{ env.REGION }}
+
+      # 5. CLEAN UP OLD REVISIONS (Keep last 5)
+      - name: Cleanup Old Revisions
+        run: |
+          echo "🧹 Cleaning up old revisions..."
+          gcloud run revisions list \
+            --service=${{ env.SERVICE_NAME }} \
             --region=${{ env.REGION }} \
-            --format="value(status.url)"
+            --sort-by="~creationTimestamp" \
+            --format="value(REVISION)" | tail -n +6 | while read revision; do
+            echo "Deleting $revision"
+            gcloud run revisions delete "$revision" --region=${{ env.REGION }} --quiet
+          done
