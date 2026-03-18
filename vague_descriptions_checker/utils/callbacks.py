@@ -8,6 +8,8 @@ import json
 from typing import Optional
 import redis
 from vague_descriptions_checker.utils.logging import get_logger
+from vague_descriptions_checker.utils.prompt import SYSTEM_PROMPT
+import hashlib
 
 logger = get_logger("callbacks")
 
@@ -22,6 +24,11 @@ class CallbacksManager:
             socket_timeout=5,
             socket_connect_timeout=5
         )
+
+    def _generate_cache_key(self, prompt_text: str) -> str:
+        """Generates a cache key based on the system prompt and user message."""
+        key_string = f"{SYSTEM_PROMPT}||{prompt_text}"
+        return hashlib.sha256(key_string.encode()).hexdigest()
 
     def guardrail_with_cache_hit_function(self, callback_context: CallbackContext, llm_request: LlmRequest) -> Optional[LlmResponse]:
         """
@@ -81,7 +88,8 @@ class CallbacksManager:
             
             # 2. If it is a cargo description, check Redis cache
             try:
-                cached_response = self.client.get(last_user_message)
+                cache_key = self._generate_cache_key(last_user_message)
+cached_response = self.client.get(cache_key)
                 if cached_response:
                     logger.info("Cache hit", extra={
                         "json_fields": {
@@ -119,7 +127,8 @@ class CallbacksManager:
             agent_response = llm_response.content.parts[0].text
             if agent_response:
                 # Cache the response with the user message as the key
-                self.client.set(prompt, agent_response)
+                cache_key = self._generate_cache_key(prompt)
+self.client.set(cache_key, agent_response)
                 logger.info("Storing response in cache", extra={
                     "json_fields": {
                         "prompt": prompt[:50],
