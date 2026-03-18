@@ -73,6 +73,7 @@ jobs:
           fi
 
       # UPDATED STEP: Includes the new params from deploy.sh
+      # Note: --use-http2 for features such as gRPC support, Bidirectional Streaming, Multiplexing, Server Push
       - name: Deploy
         run: |
           gcloud run deploy ${{ env.SERVICE_NAME }} \
@@ -85,7 +86,7 @@ jobs:
             --vpc-egress="private-ranges-only" \
             --tag=green \
             --no-traffic \
-            --use-http2 \ # Optional, for features such as gRPC support, Bidirectional Streaming, Multiplexing, Server Push
+            --use-http2 \ 
             --health-check-type=http \
             --liveness-probe-path=/health \
             --startup-probe-path=/health \
