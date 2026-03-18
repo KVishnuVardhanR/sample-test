@@ -43,17 +43,7 @@ jobs:
           docker build -t $IMAGE_TAG .
           docker push $IMAGE_TAG
 
-      - name: Prepare environment variables
-        run: |
-          if [ -f .env ]; then
-              grep -v '^#' .env | grep -v '^[[:space:]]*$' | \
-              sed 's/ *= */: /' | sed 's/: \(.*\)/: "\1"/' | sed 's/""/"/g' > env-vars.yaml
-              echo "LOG_LEVEL: \"DEBUG\"" >> env-vars.yaml
-          else
-              echo "LOG_LEVEL: \"DEBUG\"" > env-vars.yaml
-          fi
-
-      # 1. GENERATE SERVICE YAML (Fixes the unrecognized arguments error)
+      # 1. GENERATE SERVICE YAML
       - name: Generate Service YAML
         run: |
           cat <<EOF > service.yaml
@@ -86,34 +76,38 @@ jobs:
                       path: /health
                   env:
           EOF
-          # Append env-vars.yaml content to the service.yaml under env key
-          sed 's/^/                  /' env-vars.yaml >> service.yaml
+          if [ -f .env ]; then
+            grep -v '^#' .env | grep -v '^[[:space:]]*$' | while read -r line; do
+              key=$(echo $line | cut -d '=' -f 1)
+              value=$(echo $line | cut -d '=' -f 2- | sed 's/^"//;s/"$//')
+              echo "                  - name: $key" >> service.yaml
+              echo "                    value: \"$value\"" >> service.yaml
+            done
+          fi
+          echo "                  - name: LOG_LEVEL" >> service.yaml
+          echo "                    value: \"DEBUG\"" >> service.yaml
 
-      # 2. DEPLOY (Apply the YAML configuration)
-      - name: Deploy Service Configuration
+      # 2. DEPLOY WITHOUT TRAFFIC (Initial Safety Deployment)
+      - name: Deploy Revision (No Traffic)
         run: |
           gcloud run services replace service.yaml --region=${{ env.REGION }}
-
-      # 3. TAG FOR CANARY (Create the 'green' pointer for traffic splitting)
-      - name: Tag New Revision
-        run: |
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
             --region=${{ env.REGION }} \
-            --tag=green \
+            --tag=canary \
             --no-traffic
 
-      # 4. VALIDATE & MIGRATE
-      - name: Validate and Migrate Traffic
+      # 3. SMOKE TEST (Automatic Rollback Logic)
+      - name: Run Smoke Tests
         run: |
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --format='value(status.url)')
-          TAG_URL="https://green---${SERVICE_URL#https://}"
+          CANARY_URL="https://canary---${SERVICE_URL#https://}/health"
           
-          echo "🔍 Testing new revision at: $TAG_URL"
+          echo "🔍 Testing canary revision at: $CANARY_URL"
           
           success=false
           for i in {1..5}; do
-            if curl -f "$TAG_URL/health"; then
+            if curl -f "$CANARY_URL"; then
               success=true
               break
             fi
@@ -122,16 +116,28 @@ jobs:
           done
 
           if [ "$success" = false ]; then
-            echo "❌ Rollback: Removing tag 'green'. Traffic stays on old revision."
-            gcloud run services update-traffic ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --remove-tags=green
+            echo "❌ Smoke test failed. Rollback: Removing canary tag and halting rollout."
+            gcloud run services update-traffic ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --remove-tags=canary
             exit 1
           fi
 
-          echo "✅ Splitting 5% traffic to Green..."
-          gcloud run services update-traffic ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --to-revisions=green=5
-          
-          echo "🚀 Shifting 100% to latest revision..."
-          gcloud run services update-traffic ${{ env.SERVICE_NAME }} --region ${{ env.REGION }} --to-latest
+      # 4. TRAFFIC SPLIT & FULL ROLLOUT
+      - name: Route Traffic
+        run: |
+          echo "✅ Health check passed. Moving 100% traffic to the latest revision."
+          gcloud run services update-traffic ${{ env.SERVICE_NAME }} \
+            --to-latest \
+            --region=${{ env.REGION }}
 
-      - name: Show URL
-        run: gcloud run services describe ${{ env.SERVICE_NAME }} --region=${{ env.REGION }} --format="value(status.url)"
+      # 5. CLEAN UP OLD REVISIONS (Keep last 5)
+      - name: Cleanup Old Revisions
+        run: |
+          echo "🧹 Cleaning up old revisions..."
+          gcloud run revisions list \
+            --service=${{ env.SERVICE_NAME }} \
+            --region=${{ env.REGION }} \
+            --sort-by="~creationTimestamp" \
+            --format="value(REVISION)" | tail -n +6 | while read revision; do
+            echo "Deleting $revision"
+            gcloud run revisions delete "$revision" --region=${{ env.REGION }} --quiet
+          done
