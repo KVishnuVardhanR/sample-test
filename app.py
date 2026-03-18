@@ -1,6 +1,7 @@
 # deploy_fast_api_app.py
 
 import os
+import redis
 from google.adk.cli.fast_api import get_fast_api_app
 from fastapi import FastAPI
 from vague_descriptions_checker.utils.logging import setup_production_logging, get_logger
@@ -27,6 +28,30 @@ logger.info("Starting Vague Descriptions Checker API on Cloud Run")
 
 app.title = "vague_descriptions_checker"
 app.description = "API for interacting with the Agent vague_descriptions_checker"
+
+
+# Health check endpoints
+@app.get("/health", tags=["Health"])
+async def liveness_check():
+    """Liveness probe: returns 200 if the process is running."""
+    return {"status": "ok"}
+
+@app.get("/ready", tags=["Health"])
+async def readiness_check():
+    """Readiness probe: verifies Redis connectivity before serving traffic."""
+    try:
+        # Initialize Redis client for health checks
+        redis_client = redis.Redis(
+            host=os.environ.get("REDIS_HOST", "10.59.0.3"),
+            port=int(os.environ.get("REDIS_PORT", 6379)),
+            socket_timeout=5,
+            socket_connect_timeout=5
+        )
+        if redis_client.ping():
+            return {"status": "ready", "cache": "connected"}
+    except Exception as e:
+        logger.error(f"Readiness check failed: Redis unreachable at {redis_client.connection_pool.connection_kwargs['host']}")
+        raise HTTPException(status_code=503, detail="Redis connection failed")
 
 
 # Main execution
