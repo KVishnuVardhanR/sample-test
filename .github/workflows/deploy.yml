@@ -92,6 +92,8 @@ jobs:
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image=${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
             --region=${{ env.REGION }} \
+            --service-account="vague-descriptions-checker-app@chat-app-demo-459315.iam.gserviceaccount.com" \
+            --key="projects/chat-app-demo-459315/locations/us-central1/keyRings/vague-des-checker-keyring/cryptoKeys/vague-des-checker-key" \
             --tag=canary \
             --no-traffic
 
