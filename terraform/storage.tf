@@ -16,7 +16,6 @@ provider "google" {
   region = var.region
   user_project_override = true
 }
-
 resource "google_storage_bucket" "logs_data_bucket" {
   for_each                    = toset(local.all_project_ids)
   name                        = "${each.value}-${var.project_name}-logs"
@@ -26,5 +25,26 @@ resource "google_storage_bucket" "logs_data_bucket" {
   force_destroy               = true
 
   depends_on = [resource.google_project_service.cicd_services, resource.google_project_service.deploy_project_services]
+}
+
+resource "google_storage_bucket" "rate_card_bucket" {
+  for_each                    = local.deploy_project_ids
+  name                        = "rxo-rate-card"
+  location                    = var.region
+  project                     = each.value
+  uniform_bucket_level_access = true
+  force_destroy               = false # Set to false for safety as it's a rate card
+
+  depends_on = [resource.google_project_service.cicd_services, resource.google_project_service.deploy_project_services]
+}
+
+resource "google_artifact_registry_repository" "repo-artifacts-genai" {
+  location      = var.region
+  repository_id = "cloud-run-images" # Renamed to match deploy.yml
+  description   = "Repo for Generative AI applications"
+  format        = "DOCKER"
+  project       = var.cicd_runner_project_id
+  kms_key_name  = google_kms_crypto_key.key["prod"].id # Using prod key for the CICD project registry
+  depends_on    = [resource.google_project_service.cicd_services, resource.google_project_service.deploy_project_services]
 }
 

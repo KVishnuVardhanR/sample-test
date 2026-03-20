@@ -12,34 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Read base64-encoded dummy source tarball from GCS for initial Agent Engine creation
-# CI/CD pipelines will update with actual source code after creation
-# Note: The file is already base64-encoded to avoid binary corruption when reading via Terraform
-data "google_storage_bucket_object_content" "dummy_source_b64" {
-  name   = "dummy/source-b64.txt"
-  bucket = "agent-starter-pack"
-}
-
-resource "google_vertex_ai_reasoning_engine" "app" {
+# Get project information to access the project number
+data "google_project" "project" {
   for_each = local.deploy_project_ids
 
-  display_name = var.project_name
-  description  = "Agent deployed via Terraform"
-  region       = var.region
-  project      = each.value
+  project_id = local.deploy_project_ids[each.key]
+}
 
-  spec {
-    agent_framework = "google-adk"
-    service_account = google_service_account.app_sa[each.key].email
+resource "google_cloud_run_v2_service" "app" {
+  for_each = local.deploy_project_ids
 
-    deployment_spec {
-      min_instances         = 1
-      max_instances         = 10
-      container_concurrency = 9
+  name                = var.project_name
+  location            = var.region
+  project             = each.value
+  deletion_protection = false
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  labels = {
+    "created-by"                  = "adk"
+  }
 
-      resource_limits = {
-        cpu    = "4"
-        memory = "8Gi"
+  launch_stage = "BETA"
+
+  template {
+    containers {
+      # Placeholder, will be replaced by the CI/CD pipeline
+      image = "us-docker.pkg.dev/cloudrun/container/hello"
+      resources {
+        limits = {
+          cpu    = "4"
+          memory = "8Gi"
+        }
+        cpu_idle = false
       }
 
       env {
@@ -49,37 +52,46 @@ resource "google_vertex_ai_reasoning_engine" "app" {
 
       env {
         name  = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"
-        value = "true"
+        value = "NO_CONTENT"
       }
 
       env {
-        name  = "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY"
-        value = "true"
+        name  = "REDIS_HOST"
+        value = google_redis_instance.cache[each.key].host
       }
     }
 
-    source_code_spec {
-      inline_source {
-        source_archive = trimspace(data.google_storage_bucket_object_content.dummy_source_b64.content)
-      }
+    # kms_key = google_kms_crypto_key.key[each.key].id
 
-      python_spec {
-        entrypoint_module  = "app.agent_engine_app"
-        entrypoint_object  = "agent_engine"
-        requirements_file  = "app/app_utils/.requirements.txt"
-        version            = "3.12"
-      }
+    vpc_access {
+      connector = google_vpc_access_connector.connector[each.key].id
+      egress    = "PRIVATE_RANGES_ONLY"
     }
+
+    service_account                  = google_service_account.app_sa[each.key].email
+    max_instance_request_concurrency = 40
+
+    scaling {
+      min_instance_count = 1
+      max_instance_count = 10
+    }
+
+    session_affinity = true
   }
 
-  # This lifecycle block prevents Terraform from overwriting the source code when it's
-  # updated by Agent Engine deployments outside of Terraform (e.g., via CI/CD pipelines)
+  traffic {
+    type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+    percent = 100
+  }
+
   lifecycle {
     ignore_changes = [
-      spec[0].source_code_spec,
+      template[0].containers[0].image,
     ]
   }
 
   # Make dependencies conditional to avoid errors.
-  depends_on = [google_project_service.deploy_project_services]
+  depends_on = [
+    google_project_service.deploy_project_services,
+  ]
 }

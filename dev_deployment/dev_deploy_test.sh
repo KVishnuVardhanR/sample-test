@@ -34,7 +34,7 @@ PAYLOAD=$(cat <<EOF
   "newMessage": {
     "parts": [
       {
-        "text": "Macbook 13 inch Pro"
+        "text": "toothbrush"
       }
     ],
     "role": "user"

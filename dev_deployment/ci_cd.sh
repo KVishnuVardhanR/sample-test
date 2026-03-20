@@ -3,6 +3,21 @@ gcloud iam service-accounts create github-deployer \
   --display-name="GitHub Actions Deployer" \
   --description="Used by GitHub Actions to deploy to Cloud Run"
 
+# Create a key ring in the us-central1 region
+gcloud kms keyrings create vague-des-checker-keyring \
+    --location=us-central1 \
+    --project=chat-app-demo-459315
+
+# Create a symmetric encryption key for encrypting storage objects
+gcloud kms keys create vague-des-checker-key \
+    --location=us-central1 \
+    --keyring=vague-des-checker-keyring \
+    --purpose=encryption \
+    --rotation-period=90d \
+    --next-rotation-time=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+90 days") \
+    --project=chat-app-demo-459315
+
+    
 # Create the Artifact Registry repository
 gcloud artifacts repositories create cloud-run-images \
   --repository-format=docker \
@@ -63,31 +78,15 @@ gcloud iam workload-identity-pools providers describe github-provider \
   --workload-identity-pool="github-pool" \
   --format="value(name)"
 
-
-# Create a key ring in the us-central1 region
-gcloud kms keyrings create vague-des-checker-keyring \
-    --location=us-central1 \
+# create a cloud run service agent
+gcloud beta services identity create \
+    --service=run.googleapis.com \
     --project=chat-app-demo-459315
 
-# Create a symmetric encryption key for encrypting storage objects
-gcloud kms keys create vague-des-checker-key \
-    --location=us-central1 \
-    --keyring=vague-des-checker-keyring \
-    --purpose=encryption \
-    --rotation-period=90d \
-    --next-rotation-time=$(date -u +"%Y-%m-%dT%H:%M:%SZ" -d "+90 days") \
-    --project=chat-app-demo-459315
-
-
-# Create the dedicated Runtime SA
-gcloud iam service-accounts create vague-descriptions-checker-app \
-    --display-name="Cloud Run Runtime Identity" \
-    --project=chat-app-demo-459315
-
-# Grant the Cloud Storage service agent permission to encrypt/decrypt with the key
+# # Grant the Cloud Storage service agent permission to encrypt/decrypt with the key
 gcloud kms keys add-iam-policy-binding vague-des-checker-key \
     --location=us-central1 \
     --keyring=vague-des-checker-keyring \
-    --member="serviceAccount:vague-descriptions-checker-app@chat-app-demo-459315.iam.gserviceaccount.com" \
+    --member="serviceAccount:service-781395648013@serverless-robot-prod.iam.gserviceaccount.com" \
     --role="roles/cloudkms.cryptoKeyEncrypterDecrypter" \
     --project=chat-app-demo-459315

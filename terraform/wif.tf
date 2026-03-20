@@ -1,6 +1,6 @@
 
 data "google_project" "cicd_project" {
-  project_id = var.dev_project_id
+  project_id = var.cicd_runner_project_id
 }
 
 resource "google_service_account_iam_member" "github_oidc_access" {
@@ -20,7 +20,7 @@ resource "google_service_account_iam_member" "github_sa_impersonation" {
 
 resource "google_iam_workload_identity_pool" "github_pool" {
   workload_identity_pool_id = "${var.project_name}-pool"
-  project                   = var.dev_project_id
+  project                   = var.cicd_runner_project_id
   display_name              = "GitHub Actions Pool"
   depends_on         = [resource.google_project_service.cicd_services, resource.google_project_service.deploy_project_services]
 }
