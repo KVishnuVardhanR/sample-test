@@ -92,3 +92,7 @@ logger.info("Vague Descriptions Checker Agent successfully created")
 
 # if __name__ == "__main__":
 #     asyncio.run(main())
+
+from google.adk.apps import App
+
+app = App(root_agent=root_agent, name="vague_descriptions_checker")

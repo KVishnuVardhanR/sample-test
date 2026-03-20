@@ -15,12 +15,22 @@
 variable "project_name" {
   type        = string
   description = "Project name used as a base for resource naming"
-  default     = "vague-des-classify"
+  default     = "sample-test"
 }
 
-variable "dev_project_id" {
+variable "prod_project_id" {
   type        = string
-  description = "Google Cloud Project ID for the development environment."
+  description = "**Production** Google Cloud Project ID for resource deployment."
+}
+
+variable "staging_project_id" {
+  type        = string
+  description = "**Staging** Google Cloud Project ID for resource deployment."
+}
+
+variable "cicd_runner_project_id" {
+  type        = string
+  description = "Google Cloud Project ID where CI/CD pipelines will execute."
 }
 
 variable "region" {
@@ -32,7 +42,7 @@ variable "region" {
 variable "host_connection_name" {
   description = "Name of the host connection to create in Cloud Build"
   type        = string
-  default     = "vague-des-classify-github-connection"
+  default     = "sample-test-github-connection"
 }
 
 variable "repository_name" {
@@ -46,7 +56,6 @@ variable "app_sa_roles" {
   default = [
 
     "roles/aiplatform.user",
-    "roles/discoveryengine.editor",
     "roles/logging.logWriter",
     "roles/cloudtrace.agent",
     "roles/storage.admin",
@@ -58,9 +67,9 @@ variable "cicd_roles" {
   description = "List of roles to assign to the CICD runner service account in the CICD project"
   type        = list(string)
   default = [
+    "roles/run.invoker",
     "roles/storage.admin",
     "roles/aiplatform.user",
-    "roles/discoveryengine.editor",
     "roles/logging.logWriter",
     "roles/cloudtrace.agent",
     "roles/artifactregistry.writer",
@@ -71,10 +80,12 @@ variable "cicd_roles" {
 variable "cicd_sa_deployment_required_roles" {
   description = "List of roles to assign to the CICD runner service account for the Staging and Prod projects."
   type        = list(string)
-  default = [    
+  default = [
+    "roles/run.admin",
     "roles/iam.serviceAccountUser",
     "roles/aiplatform.user",
-    "roles/storage.admin"
+    "roles/storage.admin",
+    "roles/artifactregistry.writer"
   ]
 }
 
@@ -96,6 +107,6 @@ variable "create_repository" {
 variable "feedback_logs_filter" {
   type        = string
   description = "Log Sink filter for capturing feedback data. Captures logs where the `log_type` field is `feedback`."
-  default     = "jsonPayload.log_type=\"feedback\" jsonPayload.service_name=\"vague-des-classify\""
+  default     = "jsonPayload.log_type=\"feedback\" jsonPayload.service_name=\"sample-test\""
 }
 
