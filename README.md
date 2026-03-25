@@ -33,6 +33,8 @@ The system follows a modular, agentic architecture designed for reliability and 
 -   `terraform/`: Infrastructure-as-code for GCP deployment.
 -   `tests/`: Comprehensive test suite for agent logic and tooling.
 -   `requirements.txt`: Python dependencies.
+-   `test_data.jsonl`: Test dataset containing cargo descriptions and their ground truth labels.
+-   `metrics_calc.py`: Evaluation script to calculate accuracy, precision, and latency metrics for the agent.
 
 ---
 
@@ -62,6 +64,25 @@ The API will be available at `http://localhost:8080`. You can access the interac
 ```bash
 pytest
 ```
+
+### Evaluation & Metrics
+
+The project includes a metrics calculation script to evaluate the agent's performance against a known dataset.
+
+**Test Data**: `test_data.jsonl` contains a set of cargo descriptions with "clear" or "vague" labels used as ground truth.
+
+**Run Evaluation**:
+To calculate Accuracy, Precision, and Latency:
+```bash
+# Ensure you are in the conda environment
+conda activate vague_cargo
+python metrics_calc.py
+```
+
+The script will output:
+- **Accuracy**: Overall classification correctness.
+- **Precision**: Calculated for both `clear` and `vague` classes.
+- **Latency**: Average, min, max, and median execution times.
 
 ---
 
