@@ -46,7 +46,7 @@ def create_vague_descriptions_checker_agent(name: str = "vague_descriptions_chec
     
     root_agent = LlmAgent(
         name="vague_descriptions_checker",  
-        model=os.getenv("GOOGLE_GENAI_MODEL", "gemini-2.5-flash"),# LiteLlm(model="openai/gpt-4o"), LiteLlm(model="anthropic/claude-3-haiku-20240307")
+        model=os.getenv("GOOGLE_GENAI_MODEL", "gemini-2.5-flash-lite"),# LiteLlm(model="openai/gpt-4o"), LiteLlm(model="anthropic/claude-3-haiku-20240307")
         instruction=SYSTEM_PROMPT,
         tools=[fetch_cbp_content],
         output_schema=VagueClassification,
